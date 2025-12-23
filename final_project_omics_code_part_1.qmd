@@ -1,0 +1,289 @@
+---
+title: "Final Project OMICS"
+author: "Chairetaki Antonia"
+format: html
+Editor: visual
+---
+
+## Data Loading and Setup
+
+```{r setup}
+
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(Matrix)
+library(SeuratObject)
+
+# Load the PBMC dataset
+pbmc.data <- Read10X(data.dir = "./filtered_gene_bc_matrices/hg19/")
+
+#replace underscores with dashes in the gene names
+rownames(pbmc.data) <- gsub("_", "-", rownames(pbmc.data))
+
+# Initialize the Seurat object with the raw (non-normalized data).
+pbmc <- CreateSeuratObject(counts = pbmc.data, project = "pbmc3k", min.cells = 3, min.features = 200)
+pbmc
+
+pbmc[["percent.mt"]] <- PercentageFeatureSet(pbmc, pattern = "^MT-")
+
+```
+
+
+```{r}
+
+VlnPlot(pbmc, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3) #Figure 1
+
+```
+
+
+```{r}
+
+plot1 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2 #Figure 2
+
+#Filtering and normalizing our data
+pbmc <- subset(pbmc, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
+
+pbmc <- NormalizeData(pbmc, normalization.method = "LogNormalize", scale.factor = 10000)
+
+pbmc <- NormalizeData(pbmc)
+
+```
+
+
+```{r}
+#Feature selection
+pbmc <- FindVariableFeatures(pbmc, selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(pbmc), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(pbmc)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1 + plot2 #Figure 3
+
+```
+
+
+```{r}
+
+#Scaling our data
+all.genes <- rownames(pbmc)
+pbmc <- ScaleData(pbmc, features = all.genes)
+
+```
+
+
+```{r}
+
+pbmc <- RunPCA(pbmc, features = VariableFeatures(object = pbmc))
+
+# Print the top 5 genes with the highest impact in the first 5 loadings, the printing output is listed below.
+print(pbmc[["pca"]], dims = 1:5, nfeatures = 5)
+
+VizDimLoadings(pbmc, dims = 1:2, reduction = "pca") # Figure 4
+
+```
+
+A list with the top 5 genes with the highest positive and negative loadings for the first five principal components, identifying the primary features driving biological variation in each dimension. The list is as is printed from the code above. 
+
+PC_ 1 
+Positive:  CST3, TYROBP, LST1, AIF1, FTL 
+Negative:  MALAT1, LTB, IL32, IL7R, CD2 
+PC_ 2 
+Positive:  CD79A, MS4A1, TCL1A, HLA-DQA1, HLA-DQB1 
+Negative:  NKG7, PRF1, CST7, GZMB, GZMA 
+PC_ 3 
+Positive:  HLA-DQA1, CD79A, CD79B, HLA-DQB1, HLA-DPB1 
+Negative:  PPBP, PF4, SDPR, SPARC, GNG11 
+PC_ 4 
+Positive:  HLA-DQA1, CD79B, CD79A, MS4A1, HLA-DQB1 
+Negative:  VIM, IL7R, S100A6, IL32, S100A8 
+PC_ 5 
+Positive:  GZMB, NKG7, S100A8, FGFBP2, GNLY 
+Negative:  LTB, IL7R, CKB, VIM, MS4A7 
+
+```{r}
+DimPlot(pbmc, reduction = "pca") + NoLegend() #Figure 5
+```
+
+
+```{r}
+DimHeatmap(pbmc, dims = 1, cells = 500, balanced = TRUE) #Figure 6
+```
+
+
+```{r}
+DimHeatmap(pbmc, dims = 1:15, cells = 500, balanced = TRUE) #Figure 7
+```
+
+
+```{r}
+
+#Finding how many PCs should I use to optimize my analysis
+ElbowPlot(pbmc) #Figure 8
+```
+
+
+```{r}
+
+pbmc <- FindNeighbors(pbmc, dims = 1:10)
+pbmc <- FindClusters(pbmc, resolution = 0.5)
+
+# Look at cluster IDs of the first 5 cells
+head(Idents(pbmc), 5)
+
+pbmc <- RunUMAP(pbmc, dims = 1:10)
+
+# individual clusters
+DimPlot(pbmc, reduction = "umap") #Figure 9
+
+saveRDS(pbmc, file = "./rds_results.rds")
+
+```
+
+Bellow, we try the same code with different parameters for PCs (5,10,15) and different resolution (0.3,0.5,0.8) to compare the UMAPs 
+
+```{r}
+
+pbmc <- FindNeighbors(pbmc, dims = 1:5)
+pbmc <- FindClusters(pbmc, resolution = 0.5)
+pbmc <- RunUMAP(pbmc, dims = 1:5)
+
+DimPlot(pbmc, reduction = "umap") #Figure 10
+
+```
+
+```{r}
+pbmc <- FindNeighbors(pbmc, dims = 1:15)
+pbmc <- FindClusters(pbmc, resolution = 0.5)
+pbmc <- RunUMAP(pbmc, dims = 1:15)
+
+DimPlot(pbmc, reduction = "umap") #Figure 11
+```
+
+```{r}
+pbmc <- FindNeighbors(pbmc, dims = 1:10)
+pbmc <- FindClusters(pbmc, resolution = 0.3)
+pbmc <- RunUMAP(pbmc, dims = 1:10)
+
+DimPlot(pbmc, reduction = "umap") #Figure 12
+
+#Find markers for these new clusters (keep only upregulated genes)
+markers_res0.3 <- FindAllMarkers(pbmc, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+
+#Export the list to a text file (tab-separated)
+write.table(markers_res0.3, file = "cluster_markers_res0.3.txt", sep = "\t", quote = FALSE, row.names = FALSE)
+```
+
+```{r}
+pbmc <- FindNeighbors(pbmc, dims = 1:10)
+pbmc <- FindClusters(pbmc, resolution = 0.8)
+pbmc <- RunUMAP(pbmc, dims = 1:10)
+
+DimPlot(pbmc, reduction = "umap") #Figure 13
+```
+
+
+Following, we perform differential expression analysis to identify unique marker genes defining Cluster 2 relative to the entire dataset and to characterize specific transcriptional differences distinguishing Cluster 5 from Clusters 0 and 3. Finally, we identify significantly upregulated marker genes for each cluster, filtering for positive markers with a greater than 2-fold change (avg_log2FC > 1).
+
+```{r}
+# find all markers of cluster 2
+cluster2.markers <- FindMarkers(pbmc, ident.1 = 2)
+head(cluster2.markers, n = 5)
+```
+
+5 Most important genes for cluster 2
+                  p_val avg_log2FC pct.1 pct.2     p_val_adj
+CD79A      0.000000e+00   6.911221 0.936 0.041  0.000000e+00
+MS4A1      0.000000e+00   5.718520 0.855 0.053  0.000000e+00
+CD79B     2.655974e-274   4.636747 0.916 0.142 3.642403e-270
+LINC00926 2.397625e-272   7.379757 0.564 0.009 3.288103e-268
+TCL1A     9.481783e-271   6.688051 0.622 0.022 1.300332e-266
+
+```{r}
+# find all markers distinguishing cluster 5 from clusters 0 and 3
+cluster5.markers <- FindMarkers(pbmc, ident.1 = 5, ident.2 = c(0, 3))
+head(cluster5.markers, n = 5)
+```
+
+5 Most important genes that separate cluster 5 from cluster 0 and 3
+               p_val avg_log2FC pct.1 pct.2     p_val_adj
+S100A8 8.727569e-184   8.179950 0.987 0.079 1.196899e-179
+S100A9 5.478062e-164   7.839796 0.991 0.150 7.512615e-160
+LGALS2 1.051637e-161   6.854126 0.838 0.033 1.442215e-157
+TYROBP 4.616683e-159   5.677419 0.987 0.164 6.331319e-155
+CST3   6.587707e-153   5.700746 0.982 0.185 9.034381e-149
+
+```{r}
+#Differential expression analysis for all clusters, keeping only the upregulating important genes
+pbmc.markers <- FindAllMarkers(pbmc, only.pos = TRUE)
+pbmc.markers %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1)
+```
+
+       p_val avg_log2FC pct.1 pct.2 p_val_adj cluster gene     
+       <dbl>      <dbl> <dbl> <dbl>     <dbl> <fct>   <chr>    
+ 1 5.43e-109       1.22 0.959 0.602 7.45e-105 0       LDHB     
+ 2 1.60e- 89       2.23 0.496 0.119 2.20e- 85 0       CCR7     
+ 3 8.03e- 55       2.88 0.244 0.04  1.10e- 50 0       FHIT     
+ 4 3.29e- 54       2.05 0.38  0.11  4.51e- 50 0       LEF1     
+ 5 3.73e- 51       1.85 0.38  0.114 5.12e- 47 0       PRKCQ-AS1
+ 6 4.62e- 47       2.14 0.319 0.086 6.34e- 43 0       MAL      
+ 7 1.94e- 46       1.14 0.677 0.365 2.66e- 42 0       NOSIP    
+ 8 3.61e- 46       1.51 0.485 0.191 4.95e- 42 0       PIK3IP1  
+ 9 1.26e- 41       1.33 0.446 0.178 1.72e- 37 0       TCF7     
+10 2.74e- 40       1.40 0.293 0.084 3.76e- 36 0       LDLRAP1
+
+```{r}
+cluster0.markers <- FindMarkers(pbmc, ident.1 = 0, logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+
+VlnPlot(pbmc, features = c("MS4A1", "CD79A")) #Figure 14
+```
+
+```{r}
+# you can plot raw counts as well
+VlnPlot(pbmc, features = c("NKG7", "PF4"), slot = "counts", log = TRUE) #Figure 15
+```
+
+```{r}
+FeaturePlot(pbmc, features = c("MS4A1", "GNLY", "CD3E", "CD14", "FCER1A", "FCGR3A", "LYZ", "PPBP",
+    "CD8A")) #Figure 16
+```
+
+```{r}
+FeaturePlot(pbmc, features = c("CCL5", "MS4A1", "SEPT5")) #Figure 17
+```
+
+Following we extract the top 10 most strongly upregulated genes for each cluster and visualizes their expression across the dataset in a heatmap to demonstrate the distinct molecular signatures that define each cell group.
+```{r}
+pbmc.markers %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1) %>%
+    slice_head(n = 10) %>%
+    ungroup() -> top10
+DoHeatmap(pbmc, features = top10$gene) + NoLegend() #Figure 18
+```
+
+
+```{r}
+new.cluster.ids <- c("Naive CD4 T", "CD14+ Mono", "Memory CD4 T", "B", "CD8 T", "FCGR3A+ Mono",
+    "NK", "DC", "Platelet")
+names(new.cluster.ids) <- levels(pbmc)
+pbmc <- RenameIdents(pbmc, new.cluster.ids)
+DimPlot(pbmc, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend() #Figure 19
+```
+
+
+```{r}
+library(ggplot2)
+plot <- DimPlot(pbmc, reduction = "umap", label = TRUE, label.size = 4.5) + xlab("UMAP 1") + ylab("UMAP 2") +
+    theme(axis.title = element_text(size = 18), legend.text = element_text(size = 18)) + guides(colour = guide_legend(override.aes = list(size = 10)))
+ggsave(filename = "./pbmc3k_umap.jpg", height = 7, width = 12, plot = plot, quality = 50)
+
+saveRDS(pbmc, file = "./pbmc3k_final.rds")
+```
